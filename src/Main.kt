@@ -655,8 +655,16 @@ class Engine(private val input: Scanner) {
 
   private fun getDroneScans(drone: Drone) = droneScans[drone.id] ?: emptySet()
 
+  /**
+   * Check if a collision occurs between a fish and a target point.
+   *
+   * @param from The movement's starting coordinate.
+   * @param fish The fish to check for collision.
+   * @param target The movement's target coordinate to check for collision.
+   * @param addition An optional addition to the collision radius.
+   * @return True if a collision occurs, false otherwise.
+   */
   private fun collides(from: Coordinate, fish: Fish, target: Coordinate, addition: Int = 0): Boolean {
-    // TODO("Update collides to use also with normal fishes, then, it can be used to select the best point to scan them")
     val radius = if (fish.isMonster()) MONSTER_COLLISION + addition else 2000
     val speed = Vector2D(from, target).normalized().scaled(DRONE_MAX_SPEED.toDouble()).rounded()
 
@@ -703,6 +711,15 @@ class Engine(private val input: Scanner) {
     return t >= 0
   }
 
+  /**
+   * Check if a collision occurs between a fish and a drone with a target point.
+   *
+   * @param drone The drone to check for collision.
+   * @param fish The fish to check for collision.
+   * @param target The movement's target coordinate of the drone.
+   * @param addition An optional addition to the collision radius.
+   * @return True if a collision occurs, false otherwise.
+   */
   private fun collides(drone: Drone, fish: Fish, target: Coordinate, addition: Int = 0): Boolean {
     return collides(drone.coordinate, fish, target, addition)
   }
