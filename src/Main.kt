@@ -376,7 +376,7 @@ class Engine(private val input: Scanner) {
 
     val goUp = willWin || (globalCalculatedScore > myScore + 45) || (droneCalculatedScore > myScore + 20)
 
-    if ((!missingFishes() || goUp || drone.emerging) && getDroneScans(drone).isNotEmpty()) {
+    if ((!areMissingFishes() || goUp || drone.emerging) && getDroneScans(drone).isNotEmpty()) {
       drone.emerging = true
       action = emerge(drone)
       strategy = Strategy.Emerge
@@ -476,8 +476,8 @@ class Engine(private val input: Scanner) {
 
   private fun explore(drone: Drone): String {
     val other = myDrones.first { it.id != drone.id }
-    val missing = availableFishes.filter { !scanned(it) }.map { getCreature(it) }
-    val missingFishes = availableFishes.filter { !scanned(it) && other.goingFor != it }.map { getCreature(it) }
+    val missing = availableFishes.filter { !hasScanned(it) }.map { getCreature(it) }
+    val missingFishes = availableFishes.filter { !hasScanned(it) && other.goingFor != it }.map { getCreature(it) }
 
     if (missingFishes.isEmpty() && missing.isEmpty()) {
       if (DEBUGGING) debug("Drone ${drone.id} is free")
@@ -624,20 +624,22 @@ class Engine(private val input: Scanner) {
     return 0
   }
 
-  private fun missingFishes(): Boolean {
+  private fun areMissingFishes(): Boolean {
     val allScans = myDrones.flatMap { getDroneScans(it) }.toSet() + myScans
     return availableFishes.any { it !in allScans }
   }
 
-  private fun scanned(id: Int): Boolean {
+  private fun hasScanned(id: Int): Boolean {
     return id in myScans || myDrones.any { droneScans[it.id]?.contains(id) == true }
   }
 
   private fun getOpponentScans() = (opponentScans + opponentDrones.flatMap { getDroneScans(it) }).toSet()
 
-  private fun getCreaturesInRange(drone: Drone) = this.viewedCreatures
-    .map { getCreature(it) }
-    .filter { it.coordinate.distanceTo(drone.coordinate) <= (if (it.isMonster()) 2300 else 2000) }
+  private fun getCreaturesInRange(drone: Drone): List<Fish> {
+    return this.viewedCreatures
+      .map { getCreature(it) }
+      .filter { it.coordinate.distanceTo(drone.coordinate) <= (if (it.isMonster()) 2300 else 2000) }
+  }
 
   private fun getFishes(creatures: Iterable<Fish>) = creatures.filter { !it.isMonster() }
 
