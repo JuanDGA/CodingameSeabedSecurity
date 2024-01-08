@@ -19,8 +19,8 @@ const val DRONE_MAX_SPEED = 600
 
 const val COORDINATES_TO_CHECK_AROUND = 359
 
-val cosine = (0..COORDINATES_TO_CHECK_AROUND).associateWith { cos(Math.toRadians(it.toDouble())) }
-val sine = (0..COORDINATES_TO_CHECK_AROUND).associateWith { sin(Math.toRadians(it.toDouble())) }
+val cosine = (0..359).associateWith { cos(Math.toRadians(it.toDouble())) }
+val sine = (0..359).associateWith { sin(Math.toRadians(it.toDouble())) }
 
 enum class LightsState {
   ON, OFF;
@@ -30,7 +30,6 @@ enum class Strategy {
   Explore,
   Emerge,
   Attack,
-  Wait,
 }
 
 enum class RadarZone {
@@ -74,8 +73,6 @@ val funnyPhrases = listOf(
   "Warning: Enter at your own risk—help needed to navigate chaos!",
   "Code red: Seeking a rescue squad for this epic mess I've made!"
 )
-
-// Utilities
 
 fun debug(vararg info: Any?) {
   System.err.println(info.joinToString(";"))
@@ -223,20 +220,23 @@ data class Fish(
 
     val allCoordinates = ownCoordinates + otherCoordinates
 
-    val newSpeed = Vector2D(coordinate, allCoordinates.minBy { it.distanceTo(coordinate) }).normalized()
-      .scaled(MONSTER_SPEED.toDouble()).rounded()
+    val newSpeed = Vector2D(coordinate, allCoordinates.minBy { it.distanceTo(coordinate) })
+      .normalized()
+      .scaled(MONSTER_SPEED.toDouble())
+      .rounded()
 
     return this.copy(speed = newSpeed)
   }
 }
 
-class Drone(input: Scanner) {
-  var id: Int = input.nextInt()
-  var coordinate: Coordinate = Coordinate(input.nextInt(), input.nextInt())
-  var lightsState: LightsState = LightsState.OFF
-  private var emergency: Boolean = input.nextInt() > 0
-  private var battery: Int = input.nextInt()
+data class Drone(
+  val id: Int,
+  var coordinate: Coordinate,
+  private var emergency: Boolean,
+  private var battery: Int
+) {
   var supposedSpeed = Vector2D.zero()
+  var lightsState: LightsState = LightsState.OFF
 
   var emerging = false
   var goingFor = -1
@@ -257,6 +257,17 @@ class Drone(input: Scanner) {
   fun lights(state: LightsState): String {
     this.lightsState = state
     return if (state == LightsState.ON) "1" else "0"
+  }
+
+  companion object {
+    fun from(input: Scanner): Drone {
+      return Drone(
+        id = input.nextInt(),
+        coordinate = Coordinate(input.nextInt(), input.nextInt()),
+        emergency = input.nextInt() > 0,
+        battery = input.nextInt(),
+      )
+    }
   }
 }
 
@@ -508,6 +519,30 @@ class Engine(private val input: Scanner) {
     return doMove(coordinate, drone)
   }
 
+  private fun validateAction(
+    drone: Drone,
+    calculatedAction: String,
+    lights: String,
+    strategy: Strategy,
+    monsters: List<Fish>
+  ): String {
+    var action = calculatedAction
+
+    val (_, x, y) = action.split(" ")
+
+    val target = Coordinate(x.toInt(), y.toInt())
+
+    val avoiding = monsters.filter { collides(drone, it, target, 10) }
+
+    if (avoiding.isNotEmpty()) action = avoid(drone, monsters, target)
+
+    val avoidingMessage = if (avoiding.isNotEmpty()) {
+      "while avoiding"
+    } else "safe"
+
+    return "$action $lights $strategy $avoidingMessage"
+  }
+
   // Utilities
 
   private fun locateFish(fish: Fish): List<Coordinate> {
@@ -668,36 +703,6 @@ class Engine(private val input: Scanner) {
 
   private fun collides(drone: Drone, fish: Fish, target: Coordinate, addition: Int = 0): Boolean {
     return collides(drone.coordinate, fish, target, addition)
-  }
-
-  private fun validateAction(
-    drone: Drone,
-    calculatedAction: String,
-    lights: String,
-    strategy: Strategy,
-    monsters: List<Fish>
-  ): String {
-    var action = calculatedAction
-
-    val target: Coordinate
-
-    if (strategy == Strategy.Wait) { // So they never wait as it is
-      target = Coordinate(drone.coordinate.x, 500)
-      action = doMove(target, drone)
-    } else {
-      val (_, x, y) = action.split(" ")
-      target = Coordinate(x.toInt(), y.toInt())
-    }
-
-    val avoiding = monsters.filter { collides(drone, it, target, 10) }
-
-    if (avoiding.isNotEmpty()) action = avoid(drone, monsters, target)
-
-    val avoidingMessage = if (avoiding.isNotEmpty()) {
-      "while avoiding"
-    } else "safe"
-
-    return "$action $lights $strategy $avoidingMessage"
   }
 
   private fun recommendExploration() {
@@ -866,14 +871,14 @@ class Engine(private val input: Scanner) {
   private fun readDrones() {
     val time = measureTimeMillis {
       repeat(input.nextInt()) {
-        if (this.myDrones.size < 2) this.myDrones.add(Drone(input))
+        if (this.myDrones.size < 2) this.myDrones.add(Drone.from(input))
         else this.myDrones[it].update(input)
 
         creaturesZone[this.myDrones[it].id] = HashMap(12)
       }
 
       repeat(input.nextInt()) {
-        if (this.opponentDrones.size < 2) this.opponentDrones.add(Drone(input))
+        if (this.opponentDrones.size < 2) this.opponentDrones.add(Drone.from(input))
         else this.opponentDrones[it].update(input)
       }
     }
