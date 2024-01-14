@@ -1,4 +1,5 @@
 import java.util.*
+import kotlin.collections.HashMap
 import kotlin.math.*
 import kotlin.system.measureTimeMillis
 
@@ -11,10 +12,12 @@ const val COLORS = 4
 const val TYPES = 3
 const val MAP_SIZE = 9999
 
+const val FISH_MAX_SPEED = 400
+
 const val MONSTER_SPEED = 540
 const val MONSTER_COLLISION = 500
 
-const val DRONE_SPEED = 590
+const val DRONE_SPEED = 600
 const val DRONE_MAX_SPEED = 600
 
 const val COORDINATES_TO_CHECK_AROUND = 359
@@ -58,8 +61,17 @@ enum class Level {
   Safe,
   First,
   Second,
-  Third
+  Third,
+  Monster
 }
+
+val levelDepths = mapOf(
+  Level.Safe to 0..2499,
+  Level.First to 2500..4999,
+  Level.Second to 5000..7499,
+  Level.Third to 7500..MAP_SIZE,
+  Level.Monster to 2500..MAP_SIZE,
+)
 
 val funnyPhrases = listOf(
   "Help! My brain just went on vacation without me!",
@@ -88,6 +100,13 @@ data class Vector2D(var x: Double, var y: Double) {
 
   fun project(over: Vector2D): Vector2D {
     return over.scaled(this.dot(over) / over.norm().pow(2))
+  }
+
+  fun rotate(grades: Double): Vector2D {
+    val cosineOf = cos(Math.toRadians(grades))
+    val sineOf = cos(Math.toRadians(grades))
+
+    return Vector2D(this.dot(Vector2D(cosineOf, -sineOf)), this.dot(Vector2D(sineOf, cosineOf)))
   }
 
   fun normalized(): Vector2D {
@@ -169,6 +188,16 @@ data class Fish(
 ) {
 
   fun isMonster() = this.type == -1
+
+  fun getLevel(): Level {
+    return when(this.type) {
+      -1 -> Level.Monster
+      0 -> Level.First
+      1 -> Level.Second
+      2 -> Level.Third
+      else -> Level.Safe
+    }
+  }
 
   fun moved(drones: List<Drone> = emptyList()): Fish {
     val newPosition = this.coordinate + this.speed
@@ -271,12 +300,97 @@ data class Drone(
   }
 }
 
+data class RadarDirection(val from: Coordinate, val zone: RadarZone)
+data class Localization(val position: Coordinate, val speed: Vector2D, val moment: Int)
+
+
+class Radar(capacity: Int) {
+  private val directions = HashMap<Int, MutableList<RadarDirection>>(capacity)
+  private val localizations = HashMap<Int, Localization>(capacity)
+
+  fun registerDirection(from: Coordinate, zone: RadarZone, fishId: Int) {
+    val fishInfo = getDirections(fishId)
+    fishInfo.add(RadarDirection(from, zone))
+    if (fishInfo.size > 4) fishInfo.removeFirst()
+  }
+
+  fun registerLocalization(fish: Fish, moment: Int) {
+    localizations[fish.id] = Localization(fish.coordinate, fish.speed, moment)
+  }
+
+  fun getFishIntRanges(fish: Fish, fishRange: List<Coordinate> = locateFish(fish)): List<Int> {
+    return listOf(fishRange.minOf { it.x }, fishRange.maxOf { it.x }, fishRange.minOf { it.y }, fishRange.maxOf { it.y })
+  }
+
+  fun locateFish(fish: Fish): List<Coordinate> {
+    val fishRange = getMaximumRange(fish)
+    if (fishRange.size == 1) return fishRange // We know the location
+
+    val fishInformation = getDirections(fish.id)
+    if (fishInformation.isEmpty()) return fishRange
+
+    var (minX, maxX, minY, maxY) = getFishIntRanges(fish, fishRange)
+
+    fishInformation.forEach {
+      val (from, zone) = it
+
+      if (RadarZone.isLeft(zone) && from.x < maxX) maxX = from.x - 800
+      if (RadarZone.isRight(zone) && from.x > minX) minX = from.x + 800
+      if (RadarZone.isUp(zone) && from.y < maxY) maxY = from.y - 800
+      if (RadarZone.isDown(zone) && from.y > minY) minY = from.y + 800
+    }
+
+    return listOf(
+      Coordinate(minX, minY),
+      Coordinate(maxX, minY),
+      Coordinate(minX, maxY),
+      Coordinate(maxX, maxY)
+    )
+  }
+
+  private fun getDirections(fishId: Int): MutableList<RadarDirection> {
+    if (!directions.containsKey(fishId)) directions[fishId] = LinkedList()
+    return directions[fishId]!!
+  }
+
+  private fun getMaximumRange(fish: Fish): List<Coordinate> {
+    if (!localizations.containsKey(fish.id)) return getLevelCoordinates(fish.getLevel())
+
+    val localization = localizations[fish.id]!!
+
+    if (DEBUGGING) debug("Last know position for ${fish.id} in ${Engine.turn}: $localization")
+
+    val turnsFromLastKnownPosition = Engine.turn - localization.moment
+
+    if (turnsFromLastKnownPosition <= 0) return listOf(localization.position)
+    if (turnsFromLastKnownPosition == 1) return listOf(localization.position + localization.speed)
+
+    val maxSpeed = if (fish.isMonster()) MONSTER_SPEED else FISH_MAX_SPEED
+
+    val levelDepth = levelDepths[fish.getLevel()]!!
+
+    val knownPosition = localization.position + localization.speed
+
+    val couldMove = (maxSpeed * turnsFromLastKnownPosition)
+
+    val minimumX = maxOf(0, knownPosition.x - couldMove)
+    val maximumX = minOf(MAP_SIZE, knownPosition.x + couldMove)
+    val minimumY = (knownPosition.y - couldMove).coerceIn(levelDepth)
+    val maximumY = (knownPosition.y + couldMove).coerceIn(levelDepth)
+
+    return listOf(Coordinate(minimumX, minimumY), Coordinate(minimumX, maximumY), Coordinate(maximumX, minimumY), Coordinate(maximumX, maximumY))
+  }
+
+  private fun getLevelCoordinates(level: Level): List<Coordinate> {
+    val levelDepth = levelDepths[level]!!
+    return listOf(Coordinate(0, levelDepth.first), Coordinate(MAP_SIZE, levelDepth.first), Coordinate(0, levelDepth.last), Coordinate(MAP_SIZE, levelDepth.last))
+  }
+}
+
 class Engine(private val input: Scanner) {
   private val creaturesAmount = input.nextInt()
   private val creatures: HashMap<Int, Fish> = HashMap(creaturesAmount)
   private var viewedCreatures = HashSet<Int>(creaturesAmount)
-
-  private var turn = 0
 
   private var myScore: Int = 0
   private var opponentScore: Int = 0
@@ -286,7 +400,10 @@ class Engine(private val input: Scanner) {
 
   private var dronesVisibility = myDrones.associate { it.id to it.lightsState }
 
+  private val radar = Radar(creaturesAmount)
+
   private var myScans = HashSet<Int>()
+
   private var myFishesPerType = HashMap<Int, HashSet<Int>>(TYPES)
   private var myFishesPerColor = HashMap<Int, HashSet<Int>>(COLORS)
 
@@ -303,13 +420,6 @@ class Engine(private val input: Scanner) {
 
   private val creaturesZone = HashMap<Int, HashMap<Int, RadarZone>>()
 
-  private val levelDepths = mapOf(
-    Level.Safe to 0..2499,
-    Level.First to 2500..4999,
-    Level.Second to 5000..7499,
-    Level.Third to 7500..MAP_SIZE
-  )
-
   private var visibleCreatures = 0
 
   init {
@@ -319,8 +429,12 @@ class Engine(private val input: Scanner) {
     }
   }
 
+  companion object {
+      var turn = 0
+  }
+
   fun newTurn() {
-    this.turn += 1
+    turn += 1
     availableFishes = HashSet()
     readScores();readScans();readDrones()
     readDroneScans();readCreatures();readRadar()
@@ -334,6 +448,7 @@ class Engine(private val input: Scanner) {
     if (turn == 1) recommendExploration()
     if (DEBUGGING) debug(fishRecommendation)
     dronesVisibility = myDrones.associate { it.id to it.lightsState }
+    tryToUpdatePositions()
     return myDrones.map { computeDrone(it) }
   }
 
@@ -358,14 +473,10 @@ class Engine(private val input: Scanner) {
     // Maybe both drones are seeing creatures, then it filters the creatures to find the corresponding ones to this drone
     val creaturesInRange = getCreaturesInRange(drone)
     val monsters = getMonsters(creaturesInRange)
-    val fishes = getFishes(creaturesInRange)
 
-    val fishesToKill = getFishesToKill(fishes)
-
-    if (fishesToKill.isNotEmpty()) {
-      strategy = Strategy.Attack
-      action = attack(drone, fishesToKill)
-      return validateAction(drone, action, lights, strategy, monsters)
+    if (DEBUGGING) {
+      debug("Creatures viewed by ${drone.id}: ${creaturesInRange.map { it.id }}")
+      debug("Monsters viewed by ${drone.id}: ${creaturesInRange.filter { it.isMonster() }.map { it.id }}")
     }
 
     val droneCalculatedScore = calculateScore(drone)
@@ -391,7 +502,7 @@ class Engine(private val input: Scanner) {
       action = emerge(drone)
     }
 
-    return validateAction(drone, action, lights, strategy, monsters)
+    return validateAction(drone, action, drone.lights(drone.lightsState), strategy, monsters)
   }
 
   // Strategies
@@ -440,8 +551,8 @@ class Engine(private val input: Scanner) {
       if (safe) {
         val monsters = movedMonsters.map { it.updateSpeed(myDrones, opponentDrones, drone, coordinate) }
 
-        val isCompletelySure = (0..(COORDINATES_TO_CHECK_AROUND / 5)).any { g ->
-          val grade = g * 5
+        val isCompletelySure = (0..(COORDINATES_TO_CHECK_AROUND / 10)).any { g ->
+          val grade = g * 10
           val nextCoordinate = Coordinate(
             coordinate.x + (DRONE_MAX_SPEED.toDouble() * cosine[grade]!!).roundToInt(),
             coordinate.y + (DRONE_MAX_SPEED.toDouble() * sine[grade]!!).roundToInt()
@@ -467,9 +578,23 @@ class Engine(private val input: Scanner) {
   }
 
   private fun exploreFacing(drone: Drone, fish: Fish): String {
-    val fishRange = locateFish(fish)
-    val moveVector = Vector2D(drone.coordinate, fishRange.minBy { drone.coordinate.distanceTo(it) })
+    val fishRange = radar.locateFish(fish)
+
+    val (minX, maxX, minY, maxY) = radar.getFishIntRanges(fish, fishRange)
+
+    var target = fishRange.minBy { drone.coordinate.distanceTo(it) }
+    var localized = false
+
+    if (maxX - minX < 2000) {
+      localized = true
+      if (DEBUGGING) debug("Localized fish: ${fish.id}")
+      target = Coordinate((minX + maxX) / 2, (minY + maxY) / 2)
+    }
+
+    val moveVector = Vector2D(drone.coordinate, target)
     val nextCoordinate = drone.coordinate + moveVector.normalized().scaled(DRONE_SPEED.toDouble()).rounded()
+
+    if (nextCoordinate.x in minX..maxX && nextCoordinate.y in minY..maxY && localized) drone.lights(LightsState.ON)
 
     return doMove(nextCoordinate, drone)
   }
@@ -485,10 +610,19 @@ class Engine(private val input: Scanner) {
       return doWait()
     }
 
-    val nextFish = missingFishes
+    val nextFishes = missingFishes
       .ifEmpty { missing }
       .sortedWith { f1, f2 -> compareFishes(drone, f1, f2) }
-      .first()
+
+    val localized = nextFishes.filter { fish ->
+      val (minX, maxX, minY, maxY) = radar.getFishIntRanges(fish)
+
+      val t = Coordinate((minX + maxX) / 2, (minY + maxY) / 2)
+
+      maxX - minX < 2000 && myDrones.minBy { it.coordinate.distanceTo(t) }.id == drone.id
+    }
+
+    val nextFish = localized.firstOrNull() ?: nextFishes.first()
 
     drone.goingFor = nextFish.id
 
@@ -523,16 +657,36 @@ class Engine(private val input: Scanner) {
     drone: Drone,
     calculatedAction: String,
     lights: String,
-    strategy: Strategy,
+    partialStrategy: Strategy,
     monsters: List<Fish>
   ): String {
+    var strategy = partialStrategy
     var action = calculatedAction
 
     val (_, x, y) = action.split(" ")
 
-    val target = Coordinate(x.toInt(), y.toInt())
+    var target = Coordinate(x.toInt(), y.toInt())
+
+    val creaturesInRange = getCreaturesInRange(drone)
+    val fishes = getFishes(creaturesInRange)
+
+    val fishesToKill = getFishesToKill(fishes)
+
+    if (fishesToKill.isNotEmpty()) {
+      val attackAction = attack(drone, fishesToKill)
+      val (_, attackX, attackY) = attackAction.split(" ")
+      val attackCoordinate = Coordinate(attackX.toInt(), attackY.toInt())
+
+      if (attackCoordinate.distanceTo(target) < drone.coordinate.distanceTo(target)) {
+        strategy = Strategy.Attack
+        target = attackCoordinate
+        action = attackAction
+      }
+    }
 
     val avoiding = monsters.filter { collides(drone, it, target, 10) }
+
+    if (DEBUGGING) debug("While going to $target avoiding ${avoiding.map {it.id}} from $monsters")
 
     if (avoiding.isNotEmpty()) action = avoid(drone, monsters, target)
 
@@ -544,48 +698,6 @@ class Engine(private val input: Scanner) {
   }
 
   // Utilities
-
-  private fun locateFish(fish: Fish): List<Coordinate> {
-    val fishLevel = if (fish.type == 0) Level.First else if (fish.type == 1) Level.Second else Level.Third
-    val levelDepth = levelDepths[fishLevel]!!
-    var minX = 0
-    var maxX = MAP_SIZE
-    var minY = levelDepth.first
-    var maxY = levelDepth.last
-
-    myDrones.forEach {
-        val distanceFromDrone = if (dronesVisibility[it.id]!! == LightsState.ON) 2000 else 300
-
-        val radar = creaturesZone[it.id]!![fish.id] ?: RadarZone.NA
-        if (radar == RadarZone.NA) return@forEach
-        if (RadarZone.isLeft(radar)) maxX = min(maxX, (it.coordinate.x - cosine[45]!! * distanceFromDrone).roundToInt())
-        if (RadarZone.isRight(radar)) minX = max(minX, (it.coordinate.x + cosine[45]!! * distanceFromDrone).roundToInt())
-        if (RadarZone.isUp(radar)) maxY = min(maxY, (it.coordinate.y - sine[45]!! * distanceFromDrone).roundToInt())
-        if (RadarZone.isDown(radar)) minY = max(minY, (it.coordinate.y + sine[45]!! * distanceFromDrone).roundToInt())
-    }
-
-    if (minX > maxX) {
-      val average = (minX + maxX) / 2
-      minX = average
-      maxX = average
-    }
-
-    if (minY > maxY) {
-      val average = (minY + maxY) / 2
-      minY = average
-      maxY = average
-    }
-
-    minY = max(minY, levelDepth.first)
-    maxY = min(maxY, levelDepth.last)
-
-    return listOf(
-        Coordinate(minX, minY),
-        Coordinate(maxX, maxY),
-        Coordinate(minX, maxY),
-        Coordinate(maxX, minY)
-    )
-}
 
   private fun compareFishes(drone: Drone, fish1: Fish, fish2: Fish): Int {
     // Check if fishes are assigned
@@ -636,9 +748,11 @@ class Engine(private val input: Scanner) {
   private fun getOpponentScans() = (opponentScans + opponentDrones.flatMap { getDroneScans(it) }).toSet()
 
   private fun getCreaturesInRange(drone: Drone): List<Fish> {
+    val distance = if (dronesVisibility[drone.id] == LightsState.ON) 2000 else 800
+
     return this.viewedCreatures
       .map { getCreature(it) }
-      .filter { it.coordinate.distanceTo(drone.coordinate) <= (if (it.isMonster()) 2300 else 2000) }
+      .filter { (it.isMonster() && myDrones.minBy { d -> d.coordinate.distanceTo(it.coordinate) }.id == drone.id) || it.coordinate.distanceTo(drone.coordinate) <= distance }
   }
 
   private fun getFishes(creatures: Iterable<Fish>) = creatures.filter { !it.isMonster() }
@@ -814,8 +928,34 @@ class Engine(private val input: Scanner) {
     return score
   }
 
+  private fun tryToUpdatePositions() {
+    // We are interested just in monsters
+    if (DEBUGGING) debug(turn, viewedCreatures)
+    val tryToUpdate = creatures.values.filter { it.isMonster() && it.id !in viewedCreatures }
+
+    tryToUpdate.forEach { monster ->
+      val range = radar.locateFish(monster)
+      if (range.size == 1) {
+        if (DEBUGGING) debug("FOUND ${monster.id}")
+        viewedCreatures.add(monster.id)
+        val position = range[0]
+
+        val nearestDrone = (myDrones + opponentDrones).minBy { it.coordinate.distanceTo(position) }.coordinate
+
+        if (DEBUGGING) debug("${monster.id} will attack $nearestDrone")
+
+        val monsterSpeed = Vector2D(position, nearestDrone).normalized().scaled(MONSTER_SPEED.toDouble()).rounded()
+
+        creatures[monster.id]?.coordinate = position
+        creatures[monster.id]?.speed = monsterSpeed
+        radar.registerLocalization(getCreature(monster.id), turn)
+      }
+    }
+    if (DEBUGGING) debug(turn, viewedCreatures)
+  }
+
   private fun getRandomPhrase(drone: Drone): String {
-    if (drone.funnyPhrase == "" || this.turn % 3 == 0) drone.funnyPhrase = funnyPhrases.random()
+    if (drone.funnyPhrase == "" || turn % 3 == 0) drone.funnyPhrase = funnyPhrases.random()
     return drone.funnyPhrase
   }
 
@@ -915,6 +1055,8 @@ class Engine(private val input: Scanner) {
         viewedCreatures.add(creatureId)
         creatures[creatureId]?.coordinate = Coordinate(input.nextInt(), input.nextInt())
         creatures[creatureId]?.speed = Vector2D(input.nextInt(), input.nextInt())
+
+        radar.registerLocalization(getCreature(creatureId), turn)
       }
     }
     if (DEBUGGING) debug("All visible creatures: $viewedCreatures")
@@ -947,8 +1089,13 @@ class Engine(private val input: Scanner) {
       repeat(input.nextInt()) {
         val droneId = input.nextInt()
         val creatureId = input.nextInt()
-        val direction = input.next()
-        creaturesZone[droneId]?.set(creatureId, RadarZone.valueOf(direction))
+        val zone = RadarZone.valueOf(input.next())
+
+        val drone = myDrones.find { it.id == droneId }!!
+
+        radar.registerDirection(drone.coordinate, zone, creatureId)
+
+        creaturesZone[droneId]?.set(creatureId, zone)
         addAvailableCreature(creatureId)
       }
     }
