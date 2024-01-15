@@ -3,10 +3,10 @@
 [SEABED SECURITY - FALL CHALLENGE 2023](https://www.codingame.com/multiplayer/bot-programming/seabed-security)
 
 ## Todo
-
-- [ ] Improve recommended fishes for each drone
-- [ ] Better decision-making about saving scans
-- [ ] Advanced fish deletion
+- [ ] Delete opponent missing fishes when all available fishes were scanned
+- [x] Improve recommended fishes for each drone
+- [x] Better decision-making about saving scans
+- [x] Advanced fish deletion
 
 ## Replays
 
