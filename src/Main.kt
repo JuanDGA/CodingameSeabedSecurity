@@ -28,34 +28,6 @@ const val FOUND_AREA = 1250000
 val cosine = (0..359).associateWith { cos(Math.toRadians(it.toDouble())) }
 val sine = (0..359).associateWith { sin(Math.toRadians(it.toDouble())) }
 
-val symmetricFishes = mapOf(
-  4 to 5,
-  5 to 4,
-  6 to 7,
-  7 to 6,
-  8 to 9,
-  9 to 8,
-  10 to 11,
-  11 to 10,
-  12 to 13,
-  13 to 12,
-  14 to 15,
-  15 to 14,
-  16 to 17,
-  17 to 16,
-  18 to 19,
-  19 to 18,
-  20 to 21,
-  21 to 20,
-)
-
-val symmetricUntil = mapOf(
-  Level.First to 4,
-  Level.Second to 7,
-  Level.Third to 11,
-  Level.Monster to 7,
-)
-
 enum class LightsState {
   ON, OFF;
 }
@@ -326,14 +298,13 @@ data class RadarDirection(val from: Coordinate, val zone: RadarZone)
 data class Localization(val position: Coordinate, val speed: Vector2D, val moment: Int)
 
 
-class Radar(capacity: Int, private val getCreature: (Int) -> Fish) {
+class Radar(capacity: Int) {
   private val directions = HashMap<Int, MutableList<RadarDirection>>(capacity)
   private val localizations = HashMap<Int, Localization>(capacity)
 
   // Cache would help to reduce iteration time
   private val localizationCache = HashMap<Int, List<Coordinate>>(capacity)
   private val rangesCache = HashMap<Int, List<Int>>(capacity)
-
 
   fun registerDirection(from: Coordinate, zone: RadarZone, fishId: Int) {
     val fishInfo = getDirections(fishId)
@@ -362,77 +333,9 @@ class Radar(capacity: Int, private val getCreature: (Int) -> Fish) {
     return range
   }
 
-  private fun symmetricLocateFish(fish: Fish): List<Coordinate> {
-    val symmetricId = symmetricFishes[fish.id]!!
-
-    val symmetricFish = getCreature(symmetricId)
-    val fishRange = getMaximumRange(fish)
-
-    val fishInformation = getDirections(fish.id)
-    val symmetricInformation = getDirections(symmetricId)
-
-    var (minX, maxX, minY, maxY) = getFishIntRanges(fishRange)
-
-    var symmetricMinX = minX
-    var symmetricMaxX = maxX
-
-    fishInformation.forEach {
-      val (from, zone) = it
-      if (RadarZone.isLeft(zone) && from.x < maxX) maxX = from.x - 420
-      if (RadarZone.isRight(zone) && from.x > minX) minX = from.x + 420
-      if (RadarZone.isUp(zone) && from.y < maxY) maxY = from.y - 420
-      if (RadarZone.isDown(zone) && from.y > minY) minY = from.y + 420
-    }
-
-    symmetricInformation.forEach {
-      val (from, zone) = it
-      if (RadarZone.isLeft(zone) && from.x < symmetricMaxX) symmetricMaxX = from.x - 420
-      if (RadarZone.isRight(zone) && from.x > symmetricMinX) symmetricMinX = from.x + 420
-    }
-
-    // Since they are symmetric, we select the minor range
-
-    val useSymmetric = (symmetricMaxX - symmetricMinX) * (maxY - minY) < (maxX - minX) * (maxY - minY)
-
-    // if useSymmetric, we update the original, otherwise we update the symmetric
-
-    if (useSymmetric) {
-      val minXFromCenter = symmetricMinX - (MAP_SIZE / 2)
-      val maxXFromCenter = symmetricMaxX - (MAP_SIZE / 2)
-      minX = (MAP_SIZE / 2) - minXFromCenter
-      maxX = (MAP_SIZE / 2) - maxXFromCenter
-    } else {
-      val minXFromCenter = minX - (MAP_SIZE / 2)
-      val maxXFromCenter = maxX - (MAP_SIZE / 2)
-      symmetricMinX = (MAP_SIZE / 2) - minXFromCenter
-      symmetricMaxX = (MAP_SIZE / 2) - maxXFromCenter
-    }
-
-    val localization = listOf(
-      Coordinate(minX, minY),
-      Coordinate(maxX, minY),
-      Coordinate(minX, maxY),
-      Coordinate(maxX, maxY)
-    )
-
-    val symmetricLocalization = listOf(
-      Coordinate(symmetricMinX, minY),
-      Coordinate(symmetricMaxX, minY),
-      Coordinate(symmetricMinX, maxY),
-      Coordinate(symmetricMaxX, maxY)
-    )
-
-    localizationCache[fish.id] = localization
-    localizationCache[symmetricId] = symmetricLocalization
-
-    return localization
-  }
-
   fun locateFish(fish: Fish): List<Coordinate> {
     if (localizationCache.containsKey(fish.id))
       return localizationCache[fish.id]!!
-
-    if (Engine.turn <= symmetricUntil[fish.getLevel()]!!) return symmetricLocateFish(fish)
 
     val fishRange = getMaximumRange(fish)
     if (fishRange.size == 1) return fishRange // We know the location
@@ -517,7 +420,7 @@ class Engine(private val input: Scanner) {
 
   private var dronesVisibility = myDrones.associate { it.id to it.lightsState }
 
-  private val radar = Radar(creaturesAmount, this::getCreature)
+  private val radar = Radar(creaturesAmount)
 
   private var myScans = HashSet<Int>()
 
@@ -564,7 +467,7 @@ class Engine(private val input: Scanner) {
   fun compute(): List<String> {
     dronesVisibility = myDrones.associate { it.id to it.lightsState }
     radar.reload()
-    recommendExploration()
+    if ((turn - 1) % 4 == 0) recommendExploration()
     if (DEBUGGING) debug(fishRecommendation)
     tryToUpdatePositions()
     return myDrones.map { computeDrone(it) }
