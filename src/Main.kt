@@ -3,7 +3,7 @@ import kotlin.collections.HashMap
 import kotlin.math.*
 import kotlin.system.measureTimeMillis
 
-const val DEBUGGING = true
+const val DEBUGGING = false
 const val DEBUGGING_INPUT = false
 
 const val FISHES_PER_TYPE = 4
@@ -153,6 +153,10 @@ data class Coordinate(val x: Int, val y: Int) {
 
   operator fun plus(other: Vector2D): Coordinate {
     return Coordinate(this.x + other.x.roundToInt(), this.y + other.y.roundToInt())
+  }
+
+  fun isZero(): Boolean {
+    return this.x == 0 && this.y == 0
   }
 
   companion object {
@@ -488,7 +492,7 @@ class Engine(private val input: Scanner) {
       return "${doWait()} ${drone.lights(LightsState.OFF)} ${getRandomPhrase(drone)}"
     }
 
-    var action: String
+    var target: Coordinate
     val lights =
       drone.lights(if (drone.coordinate.y >= 6400 || drone.coordinate.y in 3300..3700 || drone.coordinate.y in 5300..5900) LightsState.ON else LightsState.OFF)
     var strategy: Strategy
@@ -520,33 +524,33 @@ class Engine(private val input: Scanner) {
 
     if (reportScans && scansToBeSaved.isNotEmpty()) {
       drone.emerging = true
-      action = emerge(drone)
+      target = emerge(drone)
       strategy = Strategy.Emerge
-      return validateAction(drone, action, lights, strategy, monsters)
+      return validateAction(drone, target, lights, strategy, monsters)
     } else {
       drone.emerging = false
     }
 
     strategy = Strategy.Explore
-    action = explore(drone)
+    target = explore(drone)
 
-    if ("WAIT" in action) {
+    if (target.isZero()) {
       strategy = Strategy.Attack
-      action = removeFishes(drone)
+      target = removeFishes(drone)
     }
 
-    if ("WAIT" in action) {
+    if (target.isZero()) {
       drone.emerging = true
       strategy = Strategy.Emerge
-      action = emerge(drone)
+      target = emerge(drone)
     }
 
-    return validateAction(drone, action, drone.lights(drone.lightsState), strategy, monsters, false)
+    return validateAction(drone, target, drone.lights(drone.lightsState), strategy, monsters, false)
   }
 
   // Strategies
 
-  private fun emerge(drone: Drone): String {
+  private fun emerge(drone: Drone): Coordinate {
     val shouldGet = availableFishes
       .asSequence()
       .filter { it !in getOwnScans() }
@@ -572,7 +576,7 @@ class Engine(private val input: Scanner) {
 
     if (fishesToKill.isNotEmpty()) return attack(drone, fishesToKill, Coordinate(drone.coordinate.x, 500))
 
-    if (shouldGet.isEmpty()) return doMove(Coordinate(drone.coordinate.x, 500), drone)
+    if (shouldGet.isEmpty()) return Coordinate(drone.coordinate.x, 500)
     return exploreFacing(drone, shouldGet.minBy { it.second.distanceTo(drone.coordinate) }.first)
   }
 
@@ -591,7 +595,7 @@ class Engine(private val input: Scanner) {
     }
   }
 
-  private fun avoid(drone: Drone, allMonsters: List<Fish>, target: Coordinate): String {
+  private fun avoid(drone: Drone, allMonsters: List<Fish>, target: Coordinate): Coordinate {
     if (DEBUGGING) debug("Drone ${drone.id} wants to go to $target")
     var singleEscape: Coordinate? = null
     var advancedEscape: Coordinate? = null
@@ -635,10 +639,10 @@ class Engine(private val input: Scanner) {
     val escape = advancedEscape ?: singleEscape ?: drone.coordinate
     if (DEBUGGING) debug("and should go to $escape")
 
-    return doMove(escape, drone, true)
+    return escape
   }
 
-  private fun exploreFacing(drone: Drone, fish: Fish): String {
+  private fun exploreFacing(drone: Drone, fish: Fish): Coordinate {
     val (minX, maxX, minY, maxY) = radar.getFishIntRanges(fish)
     if (DEBUGGING) debug("Drone ${drone.id} facing ${fish.id} at ($minX, $minY), ($maxX, $maxY)")
 
@@ -661,41 +665,22 @@ class Engine(private val input: Scanner) {
 
     if (localized) drone.lights(LightsState.ON)
 
-    return doMove(nextCoordinate, drone)
+    return nextCoordinate
   }
 
-  private fun explore(drone: Drone): String {
+  private fun explore(drone: Drone): Coordinate {
     val other = myDrones.first { it.id != drone.id }
     val missingFishes = availableFishes.filter { !hasScanned(it) && other.goingFor != it }.map { getCreature(it) }
 
     if (missingFishes.isEmpty()) {
       if (DEBUGGING) debug("Drone ${drone.id} is free")
       drone.goingFor = -1
-      return doWait()
+      return Coordinate.zero()
     }
 
     val nextFishes = missingFishes
       .sortedWith { f1, f2 -> compareFishes(drone, f1, f2) }
 
-//    val localized = nextFishes
-//      .map{ it to radar.getFishIntRanges(it) }
-//      .filter { (_, range) ->
-//        val (minX, maxX, minY, maxY) = range
-//
-//        val center = Coordinate((minX + maxX) / 2, (minY + maxY) / 2)
-//
-//        (maxX - minX) * (maxY - minY) < FOUND_AREA && myDrones.minBy { it.coordinate.distanceTo(center) }.id == drone.id && center.x < 2000 || center.x > (MAP_SIZE - 2000)
-//      }.sortedBy { (_, range) ->
-//        val (minX, maxX, minY, maxY) = range
-//
-//        val center = Coordinate((minX + maxX) / 2, (minY + maxY) / 2)
-//        drone.coordinate.distanceTo(center)
-//      }
-//      .map { it.first }
-
-//    if (DEBUGGING) debug("Localized fishes: ${localized.map { it.id }}")
-
-//    val nextFish = localized.firstOrNull() ?: nextFishes.first()
     val nextFish = nextFishes.first()
 
     drone.goingFor = nextFish.id
@@ -705,7 +690,7 @@ class Engine(private val input: Scanner) {
     return exploreFacing(drone, nextFish)
   }
 
-  private fun attack(drone: Drone, fishesToKill: List<Fish>, alternative: Coordinate): String {
+  private fun attack(drone: Drone, fishesToKill: List<Fish>, alternative: Coordinate): Coordinate {
     val betterFish = fishesToKill.maxBy { it.type }
 
     val fishCoordinate = if (betterFish.id in viewedCreatures)
@@ -723,25 +708,25 @@ class Engine(private val input: Scanner) {
 
     val fishWillBeIn = fishCoordinate + fishSpeed
 
-    if (fishWillBeIn.x > MAP_SIZE || fishWillBeIn.x < 0) return doMove(alternative, drone)
+    if (fishWillBeIn.x > MAP_SIZE || fishWillBeIn.x < 0) return alternative
 
     val border = if (fishWillBeIn.x < MAP_SIZE / 2) -1 else MAP_SIZE + 1
 
     val hardRemoval = Vector2D(fishCoordinate, drone.coordinate).angle() < 45
 
     if (border == -1 && hardRemoval && drone.coordinate.x < fishCoordinate.x) {
-      return doMove(alternative, drone)
+      return alternative
     } else if (hardRemoval && drone.coordinate.x > fishCoordinate.x && border == MAP_SIZE + 1) {
-      return doMove(alternative, drone)
+      return alternative
     }
 
     val target = if (border == -1) {
       fishWillBeIn + Vector2D(500, 0)
     } else fishWillBeIn + Vector2D(-500, 0)
 
-    return doMove(target, drone)
+    return target
   }
-  private fun attack(drone: Drone, fish: Fish): String {
+  private fun attack(drone: Drone, fish: Fish): Coordinate {
     var (fishCoordinate, fishSpeed) = fish.coordinate to fish.speed
 
     if (fish.id !in viewedCreatures) {
@@ -751,7 +736,7 @@ class Engine(private val input: Scanner) {
 
     val fishWillBeIn = fishCoordinate + fishSpeed
 
-    if (fishWillBeIn.x > MAP_SIZE || fishWillBeIn.x < 0) return doWait()
+    if (fishWillBeIn.x > MAP_SIZE || fishWillBeIn.x < 0) return Coordinate.zero()
 
     val border = if (fishWillBeIn.x < MAP_SIZE / 2) -1 else MAP_SIZE + 1
 
@@ -763,14 +748,14 @@ class Engine(private val input: Scanner) {
       fishWillBeIn + Vector2D(500, 0)
     } else fishWillBeIn + Vector2D(-500, 0)
 
-    return doMove(target, drone)
+    return target
   }
 
-  private fun removeFishes(drone: Drone): String {
+  private fun removeFishes(drone: Drone): Coordinate {
     val fishesToKill = getFishesToKill(drone, true)
     if (fishesToKill.isEmpty()) {
       drone.attacking = -1
-      return doWait()
+      return Coordinate.zero()
     }
 
     val otherDrone = myDrones.first { it.id != drone.id }
@@ -781,7 +766,7 @@ class Engine(private val input: Scanner) {
 
     if (assignedFishes.isEmpty()) {
       drone.attacking = -1
-      return doWait()
+      return Coordinate.zero()
     }
 
     val betterToAttack = assignedFishes.first()
@@ -799,40 +784,35 @@ class Engine(private val input: Scanner) {
 
   private fun validateAction(
     drone: Drone,
-    calculatedAction: String,
+    calculatedCoordinate: Coordinate,
     lights: String,
     partialStrategy: Strategy,
     monsters: List<Fish>,
     checkAttacking: Boolean = true
   ): String {
     var strategy = partialStrategy
-    var action = calculatedAction
-
-    val (_, x, y) = action.split(" ")
-
-    var target = Coordinate(x.toInt(), y.toInt())
+    var target = calculatedCoordinate
 
     if (checkAttacking) {
       val fishesToKill = getFishesToKill(drone)
 
       if (fishesToKill.isNotEmpty()) {
-        val attackAction = attack(drone, fishesToKill, target)
-        val (_, attackX, attackY) = attackAction.split(" ")
-        val attackCoordinate = Coordinate(attackX.toInt(), attackY.toInt())
+        val attackCoordinate = attack(drone, fishesToKill, target)
 
         strategy = Strategy.Attack
         target = attackCoordinate
-        action = attackAction
       }
     }
 
     val avoiding = monsters.any { collides(drone, it, target) } || !coordinateIsSafe(monsters, drone, target)
 
-    if (avoiding) action = avoid(drone, monsters, target)
+    if (avoiding) target = avoid(drone, monsters, target)
 
     val avoidingMessage = if (avoiding) {
       "while avoiding"
     } else "safe"
+
+    val action = if (target.isZero()) doMove(emerge(drone), drone) else doMove(target, drone)
 
     return "$action $lights $strategy $avoidingMessage"
   }
@@ -1178,7 +1158,6 @@ class Engine(private val input: Scanner) {
 
         creatures[monster.id]?.coordinate = position
         creatures[monster.id]?.speed = monsterSpeed
-//        radar.registerLocalization(getCreature(monster.id), turn)
       }
     }
   }
