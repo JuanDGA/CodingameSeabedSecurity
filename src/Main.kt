@@ -511,7 +511,7 @@ class Engine(private val input: Scanner) {
     val maxOpponentScore = maxOpponentScoreAsSecond()
 
     val isVictory = globalCalculatedScore >= maxOpponentScore && myDrones.sumOf { it.coordinate.y } < opponentDrones.sumOf { it.coordinate.y }
-    val couldSaveALot = (globalCalculatedScore > myScore + 50) || (droneCalculatedScore > myScore + 25)
+    val couldSaveALot = (globalCalculatedScore > myScore + 50) || (droneCalculatedScore > myScore + 25 && droneCalculatedScore > opponentScore)
 
     val otherDroneScans = getDroneScans(otherDrone)
     val droneScans = getDroneScans(drone)
@@ -524,7 +524,7 @@ class Engine(private val input: Scanner) {
 
     if (reportScans && scansToBeSaved.isNotEmpty()) {
       drone.emerging = true
-      target = emerge(drone)
+      target = emerge(drone, isVictory)
       strategy = Strategy.Emerge
       return validateAction(drone, target, lights, strategy, monsters)
     } else {
@@ -550,34 +550,33 @@ class Engine(private val input: Scanner) {
 
   // Strategies
 
-  private fun emerge(drone: Drone): Coordinate {
-    val shouldGet = availableFishes
-      .asSequence()
-      .filter { it !in getOwnScans() }
-      .map {
-        val fish = getCreature(it)
-        fish to radar.getFishIntRanges(fish)
-      }
-      .filter {
-        val (fish, range) = it
-        val (minX, maxX, minY, maxY) = range
+  private fun emerge(drone: Drone, avoidDistractions: Boolean = false): Coordinate {
+    if (!avoidDistractions) {
+      val shouldGet = availableFishes
+        .asSequence()
+        .filter { it !in getOwnScans() }
+        .map {
+          val fish = getCreature(it)
+          fish to radar.getFishIntRanges(fish)
+        }
+        .map {
+          val (fish, range) = it
+          fish to getFishCoordinate(fish, range)
+        }
+        .filter { it.second.y < drone.coordinate.y && myDrones.minBy { drone -> drone.coordinate.distanceTo(it.second) }.id == drone.id }
+        .toList()
 
-        fish.id in viewedCreatures || (maxX - minX) * (maxY - minY) < FOUND_AREA
-      }
-      .map {
-        val (fish, range) = it
-        fish to getFishCoordinate(fish, range)
-      }
-      .filter { it.second.y < drone.coordinate.y && myDrones.minBy { drone -> drone.coordinate.distanceTo(it.second) }.id == drone.id }
-      .filter { it.second.distanceTo(drone.coordinate) < 2600 }
-      .toList()
+      if (shouldGet.isNotEmpty()) return exploreFacing(
+        drone,
+        shouldGet.minBy { it.second.distanceTo(drone.coordinate) }.first
+      )
 
-    val fishesToKill = getFishesToKill(drone)
+      val fishesToKill = getFishesToKill(drone)
 
-    if (fishesToKill.isNotEmpty()) return attack(drone, fishesToKill, Coordinate(drone.coordinate.x, 500))
+      if (fishesToKill.isNotEmpty()) return attack(drone, fishesToKill, Coordinate(drone.coordinate.x, 500))
+    }
 
-    if (shouldGet.isEmpty()) return Coordinate(drone.coordinate.x, 500)
-    return exploreFacing(drone, shouldGet.minBy { it.second.distanceTo(drone.coordinate) }.first)
+    return Coordinate(drone.coordinate.x, 500)
   }
 
   private fun coordinateIsSafe(monsters: List<Fish>, drone: Drone, coordinate: Coordinate): Boolean {
@@ -1158,6 +1157,7 @@ class Engine(private val input: Scanner) {
 
         creatures[monster.id]?.coordinate = position
         creatures[monster.id]?.speed = monsterSpeed
+//        radar.registerLocalization(getCreature(monster.id), turn)
       }
     }
   }
